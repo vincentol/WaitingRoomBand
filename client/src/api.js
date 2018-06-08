@@ -1,3 +1,4 @@
+// This file sets up the socket and functions with interacting with the socket
 import openSocket from 'socket.io-client';
 const  socket = openSocket('http://localhost:5000');
 function subscribeToTimer(cb) {

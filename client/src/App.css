@@ -26,6 +26,31 @@
   margin-bottom: 1rem;
 }
 
+.main {
+  font-size: 28px;
+}
+
+.sub {
+  font-size: 18px;
+}
+
+.ui.info.message {
+  font-size: 14px;
+  text-align:center;
+}
+
+.ui.table td.positive {
+  background-color: #cce0cc !important;
+}
+
+.ui.table td.negative {
+  background-color: #ffcccc !important;
+}
+
+textarea {
+  width: 100%;
+}
+
 @keyframes App-logo-spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }

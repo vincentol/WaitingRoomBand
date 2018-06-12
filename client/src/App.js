@@ -1,7 +1,7 @@
 import React, { Component } from 'react';
-import { Grid, Segment, Header, Card, Table, Button, Message, TextArea } from 'semantic-ui-react';
+import { Grid, Segment, Header, Card, Table, Button, Message, TextArea, Icon } from 'semantic-ui-react';
 import Webcam from 'react-webcam';
-import { subscribeToTimer, setVibrate } from './api';
+import { subscribeToTimer, setVibrate, calibrate } from './api';
 import './App.css';
 
 class App extends Component {
@@ -13,9 +13,11 @@ class App extends Component {
       socketVals: '[ 0, 0, 0, 0 ]',
       image: null,
       notes: '',
+      powerClicked: false,
     }
     this.toggleExpanded = this.toggleExpanded.bind(this);
     this.toggleAlert = this.toggleAlert.bind(this);
+    this.callibrateArduino = this.callibrateArduino.bind(this);
 
     subscribeToTimer((err, socketVals) => this.setState({
       socketVals
@@ -56,6 +58,11 @@ class App extends Component {
     this.webcam = webcam;
   }
 
+  callibrateArduino() {
+    calibrate();
+    this.setState({ powerClicked: true });
+  }
+
   capture = () => {
     const imageSrc = this.webcam.getScreenshot();
     this.setState({ image: imageSrc });
@@ -63,12 +70,11 @@ class App extends Component {
 
   render() {
     const { expanded, socketVals } = this.state;
-    // const arr = JSON.parse(socketVals);
-    const arr = [35, 0, 0, 85]
+    const arr = JSON.parse(socketVals);
     const tempC = arr[0];
     const tempF = arr[1];
     const bpm = arr[2];
-    const bpmavg = arr[3];
+    const bloodOx = arr[3]
     return (
       <div className="App">
         <Grid as={Segment}>
@@ -79,13 +85,16 @@ class App extends Component {
               </Header>
               <Message info compact>
                 <Message.Header>Standard Readings</Message.Header>
-                <div><span className="leftside">BPM</span>:<span className="rightside"> 60 - 100</span></div>
+                <div><span className="leftside">Beats Per Minute</span>:<span className="rightside"> 60 - 100</span></div>
                 <div><span className="leftside">Temperature (external)</span>:<span className="rightside"> 93.6F or 34C</span></div>
-                <div><span className="leftside">Blood Pressure</span>:<span className="rightside"> ###</span></div>
+                <div><span className="leftside">Blood Oxygen</span>:<span className="rightside"> 94 - 100</span></div>
               </Message>
             </Grid.Column>
           </Grid.Row>
           <Grid.Row centered>
+            <Grid.Column width="3" textAlign="right">
+              { !this.state.powerClicked && <Button icon onClick={() => { this.callibrateArduino() }}><Icon name='power' /></Button> }
+            </Grid.Column>
             <Grid.Column width="10" textAlign="center">
               <Card fluid raised>
                 <Card.Content>
@@ -96,13 +105,9 @@ class App extends Component {
                           <p className="main">0000</p>
                           <p className="sub">BAND ID</p>
                         </Table.Cell>
-                        <Table.Cell width={2} negative={bpmavg < 60 || bpm > 120} positive={!(bpmavg < 60 || bpm > 120)}>
+                        <Table.Cell width={2} negative={bpm < 60 || bpm > 120} positive={!(bpm < 60 || bpm > 120)}>
                           <p className="main">{bpm.toFixed(1)}</p>
                           <p className="sub">BPM</p>
-                        </Table.Cell>
-                        <Table.Cell width={2} negative={bpmavg < 60 || bpm > 120} positive={!(bpmavg < 60 || bpm > 120)}>
-                          <p className="main">{bpmavg.toFixed(1)}</p>
-                          <p className="sub">AVG BPM</p>
                         </Table.Cell>
                         <Table.Cell width={2} negative={tempF < 90 || tempF > 100} positive={!(tempF < 90 || tempF > 100)}>
                           <p className="main">{`${tempF.toFixed(1)}\xB0F`}</p>
@@ -112,9 +117,9 @@ class App extends Component {
                           <p className="main">{`${tempC.toFixed(1)}\xB0C`}</p>
                           <p className="sub">TEMP (C)</p>
                         </Table.Cell>
-                        <Table.Cell width={2}>
-                          <p className="main">TODO</p>
-                          <p className="sub">BP</p>
+                        <Table.Cell width={2} negative={bloodOx < 94 || bloodOx > 100} positive={!(bloodOx < 94 || bloodOx > 100)}>
+                          <p className="main">{`${bloodOx.toFixed(1)}`}</p>
+                          <p className="sub">BO</p>
                         </Table.Cell>
                       </Table.Row>
                     </Table.Body>
@@ -159,6 +164,7 @@ class App extends Component {
                 </Card.Content>
               </Card>
             </Grid.Column>
+            <Grid.Column width="3" />
           </Grid.Row>
         </Grid>
       </div>

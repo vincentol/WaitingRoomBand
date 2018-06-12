@@ -10,4 +10,9 @@ function setVibrate(bool) {
   socket.emit('setVibrate', bool);
 }
 
-export { subscribeToTimer, setVibrate };
+function calibrate() {
+  console.log('here');
+  socket.emit('setVibrate', true);
+}
+
+export { subscribeToTimer, setVibrate, calibrate };

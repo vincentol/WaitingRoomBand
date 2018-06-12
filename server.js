@@ -1,22 +1,26 @@
+// Setup basic express server
 const express = require('express');
 const app = express();
 const tcpport = process.env.PORT || 5000;
 const http = require('http').Server(app);
-// const allowedOrigins = 'localhost:3000';
 const io = require('socket.io')(http);
 const SerialPort = require('serialport');
 
+// Open serial port
 const port = new SerialPort('/dev/cu.SLAB_USBtoUART', {
   baudRate: 115200
 });
 
+// Start parser for data from serial port
 const byteParser = new SerialPort.parsers.ByteLength({ length: 1 });
 port.pipe(byteParser);
 
 // Values to send over to Arduino.
 const HIGH = Buffer.from([1]);
 const LOW = Buffer.from([0]);
+const CALON = Buffer.from(['k']);
 
+// Fix no CORS error for demonstration purposes
 app.use(function(req, res, next) {
   res.header("Access-Control-Allow-Origin", 'http://localhost:3000');
   res.header("Access-Control-Allow-Credentials", true);
@@ -25,19 +29,18 @@ app.use(function(req, res, next) {
   next();
 });
 
+// Test api endpoint to test express server
 app.get('/api/hello', (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
-
-  // Request methods you wish to allow
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, PATCH, DELETE');
-
   res.send({ express: 'Hello From Express' });
 });
 
-console.log(io.on);
-
+// Start socket connection
 io.on('connection', (socket) => {
   console.log('a user connected');
+
+  // Example socket connection
   socket.on('subscribeToTimer', (interval) => {
     console.log('client is subscribing to timer with interval ', interval);
     setInterval(() => {
@@ -45,10 +48,7 @@ io.on('connection', (socket) => {
     }, interval);
   });
 
-  /**
-   * Socket listener to determine whether or not to send HIGH / LOW
-   * values to Arduino.
-   */
+  // Example socket listener to write to arduino
   socket.on('message', (msg) => {
     console.log('Message received: ', msg);
     switch (msg) {
@@ -63,6 +63,7 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Tells arduino to activate vibration motor
   socket.on('setVibrate', (msg) => {
     console.log('Message received: ', msg);
     if (msg) {
@@ -71,8 +72,17 @@ io.on('connection', (socket) => {
       port.write(LOW);
     }
   });
+
+  // Tells arduino to calibrate
+  socket.on('calibrate', (msg) => {
+    console.log('Message received: ', msg);
+    if (msg) {
+      port.write(CALON);
+    }
+  });
 });
 
+// Opens port to listen to arduino
 port.on('open', () => {
   console.log('Port is open!');
 });
@@ -80,39 +90,28 @@ port.on('open', () => {
 /**
  * listen to the bytes as they are parsed from the parser.
  */
-let arrayAsString;
+let arrayAsString; // Build an array from the string that is recieved
 byteParser.on('data', (data) => {
   let message;
   stringData = data.toString('utf8')
   if (stringData === '[') {
     arrayAsString = '[';
   } else if (stringData === ']') {
-    // todo emit array
     arrayAsString += ']';
     console.log(arrayAsString);
+    // After array is built, we can send it via socket
     io.sockets.emit('newMessage', arrayAsString);
-    // let arrayAsArray = JSON.parse(arrayAsString);
-    // console.log(arrayAsArray);
-    // C F BPM AVGBPM
   } else {
     arrayAsString += stringData;
   }
-
-  // if (HIGH.compare(data) === 0) {
-  //   message = 'LED successfully turned on.';
-  // } else if (LOW.compare(data) === 0) {
-  //   message = 'LED successfully turned off.';
-  // } else {
-  //   message = 'LED did not behave as expected.';
-  // }
-
-  // io.sockets.emit('new message', message);
 });
 
+// Close socket
 port.on('close', () => {
   console.log('Serial port disconnected.');
   io.sockets.emit('close');
 });
 
 // app.listen(tcpport, () => console.log(`Listening on port ${tcpport}`));
+// Start server
 http.listen(5000);

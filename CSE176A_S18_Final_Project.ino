@@ -4,63 +4,80 @@
  */
 
 #include <Wire.h>
+// These files are from the MAX3010X Particle Sensor Breakout library
 #include "MAX30105.h"
 #include "heartRate.h"
 #include "spo2_algorithm.h"
 
 MAX30105 particleSensor;
 
+#define MAX_BRIGHTNESS 255
+
+uint16_t irBuffer[50];    // infrared LED sensor buffer
+uint16_t redBuffer[50];   // red LED sensor buffer
+
+int32_t bufferLength;
+
+int32_t spo2_value;
+int8_t spo2_valid;          // indicator if SPO2 calculation is valid
+int32_t heartRate_value;    
+int8_t heartRate_valid;     // indicator if heartRate calculation is valid
+
+byte pulseLED = 11;         
+byte readLED = 13;          // blinks with each data read
+
 float temperatureC;
 float temperatureF;
-
-const byte HR_SAMPLE_SIZE = 4;  // Increase this for more averaging. 4 is good
-byte heartrates[HR_SAMPLE_SIZE];
-byte rateSpot = 0;
-long lastBeat = 0;              // Time at which the last beat occured
-
-float beatsPerMinute;
-int beatAvg;
-long irValue;
 
 int buzzMotor = 6;
 
 bool alertOn = false;
 int buzzAlert = 0;
 
-void setup()
-{
+void setup() {
   Serial.begin(115200);
-  Serial.println("Initializing...");
 
+  pinMode(pulseLED, OUTPUT);
+  pinMode(readLED, OUTPUT);
   pinMode(buzzMotor, OUTPUT);
 
   // Initialize sensor
-  if(!particleSensor.begin(Wire, I2C_SPEED_FAST)) // Use default I2C port, 400kHz speed
+  if(!particleSensor.begin(Wire, I2C_SPEED_FAST)) // default I2C port at 400kHz
   {
-    Serial.println("Sensor was not found. Please check wiring/power.");
+    Serial.println(F("MAX30105 was not found. Please check wiring/power."));
     while(1);
   }
 
-  Serial.println("Place your index finger on the sensor with steady pressure.");
+  // Prompt user to begin sensing
+  Serial.println(F("Attach sensor to finger. Press any key to start sensing."));
+  while(Serial.available() == 0);
+  Serial.read();
 
-  particleSensor.setup();                     // Configure sensor with default settings
-  particleSensor.setPulseAmplitudeRed(0x0A);  // Turn Red LED to low to indicate sensor is running
-  particleSensor.setPulseAmplitudeGreen(0);   // Turn off Green LED
+  // for more information on settings, look at MAX30105.cpp
+  byte ledBrightness = 50;    // brightness of IR and red LEDs
+  byte sampleAverage = 4;     // number of samples to average
+  byte ledMode = 2;           // use red and IR LEDs
+  byte sampleRate = 50;       // amount of samples to take per second
+  int pulseWidth = 411;       // length of detection
+  int adcRange = 4096;        // analog to digital conversion range
+
+  particleSensor.setup(ledBrightness, sampleAverage, ledMode, sampleRate, pulseWidth, adcRange);
+
+  bufferLength = 50;          // same as size of irBuffer[] and redBuffer[]
+ 
+  CalibrateSensor();
 }
 
-void loop()
-{
-  getTemperature();
-  getHeartRate();
+void loop() {
+  GetVitals();
+  SendVitals();
 
-  sendVitals();
-  
-  checkForAlert();
-  if(buzzAlert > 0)
+  CheckForAlert();
+  if(buzzAlert > 0)   // if we get any data from serial port, turn on buzzer
   {
     if(!alertOn)
     {
-      sendAlert();
+      SendAlert();
       alertOn = true;
     }
   }
@@ -68,120 +85,125 @@ void loop()
   {
     if(alertOn)
     {
-      stopAlert();
+      StopAlert();
       alertOn = false;
     }
   }
 }
 
-// Gets the temperature from the particle sensor
-void getTemperature()
+// The pulse oximetry sensor needs to be calibrated in order to accurately calculate
+// heart rate and pulse oximetry. This is done by collecting 50 samples from the sensor,
+// then calculating those vitals.
+void CalibrateSensor()
 {
-  Serial.println("Here1");
-  temperatureC = particleSensor.readTemperature();
-  Serial.println("Here2");
-  temperatureF = particleSensor.readTemperatureF();
-  Serial.println("Here3");
-}
-
-// Prints the values of temperatureC and temperatureF
-void printTemperature()
-{
-  Serial.print("temperatureC=");
-  Serial.print(temperatureC, 4);
-  Serial.print(", temperatureF=");
-  Serial.print(temperatureF, 4);
-}
-
-void getHeartRate()
-{
-  Serial.println("Here4");
-  irValue = particleSensor.getIR();
-
-  if (checkForBeat(irValue) == true)
+  // configuration: read the first bufferLength samples and determine the signal range
+  for(byte i = 0; i < bufferLength; i++)
   {
-    // Sensed a beat
-    long delta = millis() - lastBeat;
-    lastBeat = millis();
-
-    beatsPerMinute = 60 / (delta / 1000.0);
-
-    if (beatsPerMinute < 255 && beatsPerMinute > 20)
+    while(particleSensor.available() == false)
     {
-      heartrates[rateSpot++] = (byte)beatsPerMinute;
-      rateSpot = rateSpot % HR_SAMPLE_SIZE; // wrap variable
-
-      // Take average of readings
-      beatAvg = 0;
-      for (byte i = 0; i < HR_SAMPLE_SIZE; i++)
-      {
-        beatAvg += heartrates[i];
-      }
-      beatAvg = beatAvg / HR_SAMPLE_SIZE;
+      particleSensor.check(); // Check for new sensor data
     }
+
+    redBuffer[i] = particleSensor.getRed();
+    irBuffer[i] = particleSensor.getIR();
+
+    
+    
+    particleSensor.nextSample();
+
+    Serial.print(F("red="));
+    Serial.print(redBuffer[i], DEC);
+    Serial.print(F(", ir="));
+    Serial.println(irBuffer[i], DEC);
   }
-  Serial.println("Here5");
+
+  // calculate SPO2 after first 50 samples (first 4 seconds of samples)
+  // this function can be found in spo2_algorithm.cpp from the MAX30105 library
+  maxim_heart_rate_and_oxygen_saturation(irBuffer, bufferLength, redBuffer, &spo2_value, &spo2_valid, &heartRate_value, &heartRate_valid);
+
+  // heartRate seems to be doubled, so divide by 2
+  heartRate_value = heartRate_value / 2;
 }
 
-void printHeartRate()
+// Recalculates heart rate and pulse oximetry by dumping the oldest 10 samples
+// and getting 10 new samples
+void GetVitals()
 {
-  Serial.print("IR=");
-  Serial.print(irValue);
-  Serial.print(", BPM=");
-  Serial.print(beatsPerMinute);
-  Serial.print(", Avg BPM=");
-  Serial.print(beatAvg);
-
-  if (irValue < 50000)
+  // dump first 10 sets of samples and shift last 50 sets to the top
+  for(byte i = 10; i < 50; i++)
   {
-    Serial.print(" No finger?");
+    redBuffer[i - 10] = redBuffer[i];
+    irBuffer[i - 10] = irBuffer[i];
   }
+
+  // get 10 new sets of samples
+  for(byte i = 40; i < 50; i++)
+  {
+    while(particleSensor.available() == false)
+    {
+      particleSensor.check();
+    }
+
+    digitalWrite(readLED, !digitalRead(readLED)); // Blink onboard LED with every data read
+
+    redBuffer[i] = particleSensor.getRed();
+    irBuffer[i] = particleSensor.getIR();
+    particleSensor.nextSample();
+  }
+
+  // calculate new HR and SpO2 with new sample set
+  // this function can be found in spo2_algorithm.cpp from the MAX30105 library
+  maxim_heart_rate_and_oxygen_saturation(irBuffer, bufferLength, redBuffer, &spo2_value, &spo2_valid, &heartRate_value, &heartRate_valid);
+
+  heartRate_value = heartRate_value / 2;
+
+  temperatureC = particleSensor.readTemperature();
+  temperatureF = particleSensor.readTemperatureF();
 }
 
-void getSPOData()
+// Turns temperatureC, temperatureF, heartRate_value, and spo2_value into a string of
+// the format: "[temperatureC, temperatureF, heartRate_value, spo2_value]"
+// then sends the string over serial
+void SendVitals()
 {
-  
-}
-
-void sendVitals()
-{
-  String s = String("[" + String(temperatureC) + ", " + String(temperatureF) + ", " + String(beatsPerMinute) + ", " + String(beatAvg) + "]");
+  String s = String("[" + String(temperatureC) + ", " + String(temperatureF) + ", " + String(heartRate_value) + ", " + String(spo2_value) + "]");
   Serial.println(s);
 }
 
-/*
-bool checkForAlert()
+// Checks if the serial is available. If it is, then there is an alert, and it stores
+// the read into buzzAlert
+void CheckForAlert()
 {
   if(Serial.available() > 0)
   {
     buzzAlert = Serial.read();
-    Serial.print("value sent is:");
-    Serial.println(buzzAlert);
-    return true;
-  }
-  return false;
-}
-*/
-
-void checkForAlert()
-{
-  if(Serial.available() > 0)
-  {
-    buzzAlert = Serial.read();
-    Serial.print("value sent is:");
-    Serial.println(buzzAlert);
   }
 }
 
-void sendAlert()
+// Starts the vibration motor
+void SendAlert()
 {
-  Serial.println("Sending Alert...");
   analogWrite(buzzMotor, 180);
 }
 
-void stopAlert()
+// Stops the vibration motor
+void StopAlert()
 {
-  Serial.println("Stopping Alert...");
   analogWrite(buzzMotor, 0);
 }
 
+// Prints the values of temperatureC, temperatureF, heartRate_value, and spo2_value
+void PrintVitals()
+{
+  Serial.print(F("HR="));
+  Serial.print(heartRate_value, DEC);
+
+  Serial.print(F(", SPO2="));
+  Serial.print(spo2_value, DEC);
+
+  Serial.print(F(", TempC="));
+  Serial.print(temperatureC);
+
+  Serial.print(F(", TempF="));
+  Serial.println(temperatureF);
+}
